@@ -1361,13 +1361,6 @@ class ComunicazioniUtil {
       // errore: nuova annotazione non permessa
       return $messaggi[51];
     }
-    if ($avviso->getAnnotazioni()->count() > 0) {
-      $a = $avviso->getAnnotazioni()[0];
-      if (!$reg->azioneAnnotazione('delete', $a->getData(), $docente, $a->getClasse(), $a)) {
-        // errore: cancellazione annotazione non permessa
-        return $messaggi[51];
-      }
-    }
     if ($creaAnnotazione && $allegati) {
       // errore: annotazione con allegati
       return $messaggi[52];
@@ -1627,13 +1620,6 @@ class ComunicazioniUtil {
     if (!$reg->azioneAnnotazione('add', $avviso->getData(), $docente, null, null)) {
       // errore: nuova annotazione non permessa
       return $messaggi[52];
-    }
-    if ($avviso->getAnnotazioni()->count() > 0) {
-      $a = $avviso->getAnnotazioni()[0];
-      if (!$reg->azioneAnnotazione('delete', $a->getData(), $docente, $a->getClasse(), $a)) {
-        // errore: cancellazione annotazione non permessa
-        return $messaggi[52];
-      }
     }
     // nessun errore
     return null;
@@ -1929,13 +1915,6 @@ class ComunicazioniUtil {
     if (!$reg->azioneAnnotazione('add', $avviso->getData(), $docente, null, null)) {
       // errore: nuova annotazione non permessa
       return 'exception.annotazione_non_permessa';
-    }
-    if ($avviso->getAnnotazioni()->count() > 0) {
-      $a = $avviso->getAnnotazioni()[0];
-      if (!$reg->azioneAnnotazione('delete', $a->getData(), $docente, $a->getClasse(), $a)) {
-        // errore: cancellazione annotazione non permessa
-        return 'exception.annotazione_non_permessa';
-      }
     }
     return null;
   }
