@@ -3345,7 +3345,11 @@ class RegistroUtil {
     } else {
       $tipoCattedra = (!$cattedra ? 'U' : $materia->getTipo()).':'.($tipoGruppo == 'R' ? 'R:'.$gruppo : $tipoGruppo);
     }
-    $procedura = $controllo['trasforma'][$tipoCattedra];
+    // nessuna trasformazione prevista per la combinazione richiesta
+    $procedura = $controllo['trasforma'][$tipoCattedra] ?? null;
+    if ($procedura === null) {
+      return $stato;
+    }
     if (count($lezioni) > 0) {
       // trasformazione
       switch ($procedura) {
