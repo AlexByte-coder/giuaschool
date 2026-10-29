@@ -16,6 +16,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
+use Symfony\Contracts\Translation\TranslatorInterface;
 
 
 /**
@@ -25,13 +26,15 @@ use Symfony\Component\Security\Http\Attribute\IsGranted;
  */
 class FileController extends BaseController {
 
-  // estensioni ammesse per i file caricati
-  private const ESTENSIONI_AMMESSE = ['csv', 'doc', 'docx', 'jpeg', 'jpg', 'odt', 'pdf', 'rtf', 'txt', 'xls', 'xlsx', 'zip'];
+  // estensioni ammesse per i file caricati: comprende anche le immagini
+  // che Allegato::isVisualizzabile() considera allegati validi
+  private const ESTENSIONI_AMMESSE = ['bmp', 'csv', 'doc', 'docx', 'gif', 'jpeg', 'jpg', 'odt', 'pdf', 'png', 'rtf', 'txt', 'webp', 'xls', 'xlsx', 'zip'];
 
   /**
    * Esegue l'upload di un file tramite chiamata AJAX.
    *
    * @param Request $request Pagina richiesta
+   * @param TranslatorInterface $trans Gestore delle traduzioni
    * @param string $pagina Nome della pagina di invio del form
    * @param string $param Nome del parametro usato nel form
    *
@@ -40,7 +43,7 @@ class FileController extends BaseController {
    */
   #[Route(path: '/file/upload/{pagina}/{param}', name: 'file_upload', requirements: ['pagina' => '\w+', 'param' => '\w+'], methods: ['POST'])]
   #[IsGranted('ROLE_UTENTE')]
-  public function upload(Request $request, string $pagina, string $param): Response {
+  public function upload(Request $request, TranslatorInterface $trans, string $pagina, string $param): Response {
     // controllo CSRF
     if (!$this->isCsrfTokenValid('file', $request->request->get('_csrf_token'))) {
       return new JsonResponse(['errore' => 'exception.invalid_params'], Response::HTTP_BAD_REQUEST);
@@ -59,9 +62,11 @@ class FileController extends BaseController {
       $info = pathinfo((string) $file->getClientOriginalName());
       $nomeCaricato = $info['filename'];
       $tipoCaricato = strtolower((string) $file->getClientOriginalExtension());
-      // controlla l'estensione del file
+      // controlla l'estensione del file: un tipo non permesso è un errore
+      // del richiedente, non del server
       if (!in_array($tipoCaricato, self::ESTENSIONI_AMMESSE, true)) {
-        return new Response('Errore nel caricamento del file', Response::HTTP_INTERNAL_SERVER_ERROR);
+        return new JsonResponse(['errore' => $trans->trans('exception.upload_tipo')],
+          Response::HTTP_BAD_REQUEST);
       }
       if ($file->isValid() && $file->move($dir, $nomefile.'.'.$tipoCaricato)) {
         // file caricato senza errori
@@ -112,8 +117,9 @@ class FileController extends BaseController {
       $vs = $this->reqstack->getSession()->get($var_sessione, []);
       foreach ($vs as $k=>$f) {
         if ($f['type'] == 'uploaded' && $f['temp'] == $file['temp']) {
-          // trovato: cancella
-          $fs->remove($dir.'/'.$f['temp']);
+          // trovato: cancella il file temporaneo, memorizzato con l'estensione
+          $estensione = $f['ext'] ?? '';
+          $fs->remove($dir.'/'.$f['temp'].($estensione ? '.'.$estensione : ''));
           unset($vs[$k]);
           break;
         } elseif ($f['type'] == 'existent' && $f['name'] == $file['name']) {
