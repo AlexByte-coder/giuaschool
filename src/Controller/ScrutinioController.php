@@ -458,8 +458,9 @@ class ScrutinioController extends BaseController {
       $materia = $this->em->getRepository(Materia::class)->createQueryBuilder('m')
         ->join(Cattedra::class, 'c', 'WITH', 'c.materia=m.id')
         ->join('c.classe', 'cl')
-        ->where("m.id=:materia AND c.attiva=1 AND c.tipo='N' AND cl.anno=:anno AND cl.sezione=:sezione AND (cl.gruppo=:gruppo OR cl.gruppo='' OR cl.gruppo IS NULL)")
+        ->where("m.id=:materia AND c.attiva=1 AND c.tipo='N' AND m.tipo!=:sostegno AND cl.anno=:anno AND cl.sezione=:sezione AND (cl.gruppo=:gruppo OR cl.gruppo='' OR cl.gruppo IS NULL)")
         ->setParameter('materia', $materia)
+        ->setParameter('sostegno', 'S')
         ->setParameter('anno', $classe->getAnno())
         ->setParameter('sezione', $classe->getSezione())
         ->setParameter('gruppo', $classe->getGruppo())
@@ -467,8 +468,8 @@ class ScrutinioController extends BaseController {
         ->getQuery()
         ->getOneOrNullResult();
     }
-    if (!$materia) {
-      // errore
+    if (!$materia || $materia->getTipo() == 'S') {
+      // errore: materia inesistente o non gestita in questo passo
       throw $this->createNotFoundException('exception.id_notfound');
     }
     // controllo periodo
@@ -507,7 +508,13 @@ class ScrutinioController extends BaseController {
       $log['edit'] = [];
       foreach ($form->get('lista')->getData() as $key=>$prop) {
         // controllo alunno
-        $alunno = $this->em->getRepository(Alunno::class)->findOneBy(['id' => $prop->getAlunno()->getId(),
+        $alunnoProposta = $prop->getAlunno();
+        if (!$alunnoProposta || !$alunnoProposta->getId()) {
+          // alunno mancante o non valido, salta
+          $this->em->detach($prop);
+          continue;
+        }
+        $alunno = $this->em->getRepository(Alunno::class)->findOneBy(['id' => $alunnoProposta->getId(),
           'classe' => $classe->getId(), 'abilitato' => 1]);
         if (!$alunno) {
           // alunno non esiste, salta
@@ -598,6 +605,10 @@ class ScrutinioController extends BaseController {
     // elenco voti/alunni
     $dati = $scr->elencoVoti($this->getUser(), $classe, $condotta, $periodo);
     $scrutinio = $this->em->getRepository(Scrutinio::class)->findOneBy(['classe' => $classe, 'periodo' => $periodo]);
+    if (!$scrutinio) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
     $dati['assenze'] = $scrutinio->getDato('scrutinabili');
     $dati['valutazioni'] = $scrutinio->getDato('valutazioni')['C'];
     if ($alunno > 0) {
@@ -716,8 +727,9 @@ class ScrutinioController extends BaseController {
       $materia = $this->em->getRepository(Materia::class)->createQueryBuilder('m')
         ->join(Cattedra::class, 'c', 'WITH', 'c.materia=m.id')
         ->join('c.classe', 'cl')
-        ->where("m.id=:materia AND c.attiva=1 AND c.tipo='N' AND cl.anno=:anno AND cl.sezione=:sezione AND (cl.gruppo=:gruppo OR cl.gruppo='' OR cl.gruppo IS NULL)")
+        ->where("m.id=:materia AND c.attiva=1 AND c.tipo='N' AND m.tipo!=:sostegno AND cl.anno=:anno AND cl.sezione=:sezione AND (cl.gruppo=:gruppo OR cl.gruppo='' OR cl.gruppo IS NULL)")
         ->setParameter('materia', $materia)
+        ->setParameter('sostegno', 'S')
         ->setParameter('anno', $classe->getAnno())
         ->setParameter('sezione', $classe->getSezione())
         ->setParameter('gruppo', $classe->getGruppo())
@@ -725,8 +737,8 @@ class ScrutinioController extends BaseController {
         ->getQuery()
         ->getOneOrNullResult();
     }
-    if (!$materia) {
-      // errore
+    if (!$materia || $materia->getTipo() == 'S') {
+      // errore: materia inesistente o non gestita in questo passo
       throw $this->createNotFoundException('exception.id_notfound');
     }
     // controllo periodo
@@ -754,9 +766,13 @@ class ScrutinioController extends BaseController {
       }
     }
     // dati valutazioni
-    $dati['valutazioni'] = $this->em->getRepository(Scrutinio::class)
-      ->findOneBy(['classe' => $classe, 'periodo' => $periodo])
-      ->getDato('valutazioni');
+    $scrutinio_valutazioni = $this->em->getRepository(Scrutinio::class)
+      ->findOneBy(['classe' => $classe, 'periodo' => $periodo]);
+    if (!$scrutinio_valutazioni) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
+    $dati['valutazioni'] = $scrutinio_valutazioni->getDato('valutazioni');
     // form di inserimento
     $form = $this->container->get('form.factory')->createNamedBuilder('voti', FormType::class)
       ->setAction($this->generateUrl('coordinatore_scrutinio_voti', ['classe' => $classe->getId(),
@@ -773,7 +789,13 @@ class ScrutinioController extends BaseController {
       $errore = [];
       foreach ($form->get('lista')->getData() as $key=>$voto) {
         // controllo alunno
-        $alunno = $this->em->getRepository(Alunno::class)->find($voto->getAlunno()->getId());
+        $alunnoVoto = $voto->getAlunno();
+        if (!$alunnoVoto || !$alunnoVoto->getId()) {
+          // alunno mancante o non valido, salta
+          $this->em->detach($voto);
+          continue;
+        }
+        $alunno = $this->em->getRepository(Alunno::class)->find($alunnoVoto->getId());
         if (!$alunno || !in_array($alunno->getId(), array_keys($dati['voti']))) {
           // alunno non esiste, salta
           $this->em->detach($voto);
@@ -972,6 +994,11 @@ class ScrutinioController extends BaseController {
       // errore
       throw $this->createNotFoundException('exception.not_allowed');
     }
+    // periodo ammesso (la pagina è prevista solo per gli scrutini finali)
+    if (!in_array($periodo, ['F', 'G', 'R', 'X'], true)) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
     // elenco voti
     if ($periodo == 'G' || $periodo == 'R') {
       // esame alunni sospesi: solo voti insuff.
@@ -999,9 +1026,13 @@ class ScrutinioController extends BaseController {
       $lista_esiti = ['label.esito_A' => 'A', 'label.esito_N' => 'N'];
     }
     // legge dati valutazioni
-    $dati['valutazioni'] = $this->em->getRepository(Scrutinio::class)
-      ->findOneBy(['classe' => $classe, 'periodo' => $periodo])
-      ->getDato('valutazioni');
+    $scrutinio_valutazioni = $this->em->getRepository(Scrutinio::class)
+      ->findOneBy(['classe' => $classe, 'periodo' => $periodo]);
+    if (!$scrutinio_valutazioni) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
+    $dati['valutazioni'] = $scrutinio_valutazioni->getDato('valutazioni');
     // form di inserimento
     $form = $this->container->get('form.factory')->createNamedBuilder('esito', FormType::class)
       ->setAction($this->generateUrl('coordinatore_scrutinio_esito', ['alunno' => $alunno->getId(),
@@ -1249,6 +1280,11 @@ class ScrutinioController extends BaseController {
       // errore
       throw $this->createNotFoundException('exception.not_allowed');
     }
+    // periodo ammesso (la pagina è prevista solo per gli scrutini finali)
+    if (!in_array($periodo, ['F', 'G', 'R', 'X'], true)) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
     // elenco voti
     if ($periodo == 'X') {
       // esame alunni con scrutinio rinviato
@@ -1291,9 +1327,13 @@ class ScrutinioController extends BaseController {
       }
     }
     // legge dati valutazioni
-    $dati['valutazioni'] = $this->em->getRepository(Scrutinio::class)
-      ->findOneBy(['classe' => $classe, 'periodo' => $periodo])
-      ->getDato('valutazioni');
+    $scrutinio_valutazioni = $this->em->getRepository(Scrutinio::class)
+      ->findOneBy(['classe' => $classe, 'periodo' => $periodo]);
+    if (!$scrutinio_valutazioni) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
+    $dati['valutazioni'] = $scrutinio_valutazioni->getDato('valutazioni');
     // form di inserimento
     $form = $this->container->get('form.factory')->createNamedBuilder('credito', FormType::class)
       ->setAction($this->generateUrl('coordinatore_scrutinio_credito', ['alunno' => $alunno->getId(),
@@ -1397,6 +1437,11 @@ class ScrutinioController extends BaseController {
       // errore
       throw $this->createNotFoundException('exception.not_allowed');
     }
+    // periodo ammesso (la pagina è prevista solo per gli scrutini finali)
+    if (!in_array($periodo, ['F', 'G', 'R', 'X'], true)) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
     // elenco voti
     if ($periodo == 'X') {
       // esame alunni con scrutinio rinviato
@@ -1407,9 +1452,13 @@ class ScrutinioController extends BaseController {
     }
     $valori = $dati['esito']->getDati();
     // legge dati valutazioni
-    $dati['valutazioni'] = $this->em->getRepository(Scrutinio::class)
-      ->findOneBy(['classe' => $classe, 'periodo' => $periodo])
-      ->getDato('valutazioni');
+    $scrutinio_valutazioni = $this->em->getRepository(Scrutinio::class)
+      ->findOneBy(['classe' => $classe, 'periodo' => $periodo]);
+    if (!$scrutinio_valutazioni) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
+    $dati['valutazioni'] = $scrutinio_valutazioni->getDato('valutazioni');
     // form di inserimento
     $form = $this->container->get('form.factory')->createNamedBuilder('certificazione', FormType::class)
       ->setAction($this->generateUrl('coordinatore_scrutinio_certificazione', ['alunno' => $alunno->getId(),
@@ -1607,9 +1656,13 @@ class ScrutinioController extends BaseController {
     // elenco debiti
     $dati = $scr->elencoDebitiAlunno($this->getUser(), $alunno, $periodo);
     // legge dati valutazioni
-    $dati['valutazioni'] = $this->em->getRepository(Scrutinio::class)
-      ->findOneBy(['classe' => $alunno->getClasse(), 'periodo' => $periodo])
-      ->getDato('valutazioni');
+    $scrutinio_valutazioni = $this->em->getRepository(Scrutinio::class)
+      ->findOneBy(['classe' => $alunno->getClasse(), 'periodo' => $periodo]);
+    if (!$scrutinio_valutazioni) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
+    $dati['valutazioni'] = $scrutinio_valutazioni->getDato('valutazioni');
     // form di inserimento
     $form = $this->container->get('form.factory')->createNamedBuilder('debiti', FormType::class)
       ->setAction($this->generateUrl('coordinatore_scrutinio_debiti', ['alunno' => $alunno->getId(),
@@ -1649,6 +1702,12 @@ class ScrutinioController extends BaseController {
           ->getQuery()
           ->setMaxResults(1)
           ->getOneOrNullResult();
+        // esito non ancora registrato: la conferma non è possibile
+        if (!$esito) {
+          $this->addFlash('errore', $trans->trans('exception.id_notfound'));
+          return $this->redirectToRoute('coordinatore_scrutinio', ['classe' => $alunno->getClasse()->getId(),
+            'posizione' => $posizione]);
+        }
         // modifica conferma
         $valori = $esito->getDati();
         if (count($errore) > 0) {
@@ -1676,6 +1735,7 @@ class ScrutinioController extends BaseController {
    * Compilazione della comunicazione delle carenze
    *
    * @param Request $request Pagina richiesta
+   * @param TranslatorInterface $trans Gestore delle traduzioni
    * @param ScrutinioUtil $scr Funzioni di utilità per lo scrutinio
    * @param int $alunno Identificativo dell'alunno
    * @param string $periodo Periodo relativo allo scrutinio
@@ -1686,8 +1746,8 @@ class ScrutinioController extends BaseController {
    */
   #[Route(path: '/coordinatore/scrutinio/carenze/{alunno}/{periodo}/{posizione}', name: 'coordinatore_scrutinio_carenze', requirements: ['alunno' => '\d+', 'periodo' => 'P|S|F', 'posizione' => '\d+'], defaults: ['posizione' => 0], methods: ['GET', 'POST'])]
   #[IsGranted('ROLE_DOCENTE')]
-  public function scrutinioCarenze(Request $request, ScrutinioUtil $scr, int $alunno,
-                                   string $periodo, int $posizione): Response {
+  public function scrutinioCarenze(Request $request, TranslatorInterface $trans, ScrutinioUtil $scr,
+                                   int $alunno, string $periodo, int $posizione): Response {
     // inizializza variabili
     $dati = [];
     // controllo alunno
@@ -1711,12 +1771,21 @@ class ScrutinioController extends BaseController {
       // errore
       throw $this->createNotFoundException('exception.not_allowed');
     }
+    // periodo ammesso (la pagina è prevista solo per lo scrutinio finale)
+    if ($periodo != 'F') {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
     // elenco carenze
     $dati = $scr->elencoCarenzeAlunno($this->getUser(), $alunno, $periodo);
     // legge dati valutazioni
-    $dati['valutazioni'] = $this->em->getRepository(Scrutinio::class)
-      ->findOneBy(['classe' => $alunno->getClasse(), 'periodo' => $periodo])
-      ->getDato('valutazioni');
+    $scrutinio_valutazioni = $this->em->getRepository(Scrutinio::class)
+      ->findOneBy(['classe' => $alunno->getClasse(), 'periodo' => $periodo]);
+    if (!$scrutinio_valutazioni) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
+    $dati['valutazioni'] = $scrutinio_valutazioni->getDato('valutazioni');
     // form di inserimento
     $form = $this->container->get('form.factory')->createNamedBuilder('carenze', FormType::class)
       ->setAction($this->generateUrl('coordinatore_scrutinio_carenze', ['alunno' => $alunno->getId(),
@@ -1739,6 +1808,12 @@ class ScrutinioController extends BaseController {
         ->getQuery()
         ->setMaxResults(1)
         ->getOneOrNullResult();
+      // esito non ancora registrato: la conferma non è possibile
+      if (!$esito) {
+        $this->addFlash('errore', $trans->trans('exception.id_notfound'));
+        return $this->redirectToRoute('coordinatore_scrutinio', ['classe' => $alunno->getClasse()->getId(),
+          'posizione' => $posizione]);
+      }
       // legge valori
       $valori = $esito->getDati();
       // controlla carenze
@@ -1894,6 +1969,11 @@ class ScrutinioController extends BaseController {
       // errore
       throw $this->createNotFoundException('exception.not_allowed');
     }
+    // periodo ammesso (la pagina non è prevista per gli scrutini sospesi o rinviati)
+    if (!in_array($periodo, ['P', 'S', 'F'], true)) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
     // legge ed civica
     $edcivica = $this->em->getRepository(Materia::class)->findOneByTipo('E');
     if (!$edcivica) {
@@ -1902,6 +1982,21 @@ class ScrutinioController extends BaseController {
     }
     // elenco voti/alunni
     $dati = $scr->elencoVoti($this->getUser(), $classe, $edcivica, $periodo);
+    // completa gli alunni che non hanno ancora un voto (il form richiede un oggetto per ogni voce)
+    $scrutinio_edcivica = $this->em->getRepository(Scrutinio::class)
+      ->findOneBy(['classe' => $classe, 'periodo' => $periodo]);
+    if ($scrutinio_edcivica) {
+      foreach ($dati['voti'] as $idAlunno=>$voto) {
+        if ($voto === null) {
+          $dati['voti'][$idAlunno] = (new VotoScrutinio())
+            ->setScrutinio($scrutinio_edcivica)
+            ->setMateria($edcivica)
+            ->setAlunno($this->em->getRepository(Alunno::class)->find($idAlunno))
+            ->setAssenze(0);
+          $this->em->persist($dati['voti'][$idAlunno]);
+        }
+      }
+    }
     if ($alunno > 0) {
       // singolo alunno
       foreach ($dati['voti'] as $key=>$val) {
@@ -1919,9 +2014,13 @@ class ScrutinioController extends BaseController {
       }
     }
     // legge dati valutazioni
-    $dati['valutazioni'] = $this->em->getRepository(Scrutinio::class)
-      ->findOneBy(['classe' => $classe, 'periodo' => $periodo])
-      ->getDato('valutazioni')['E'];
+    $scrutinio_valutazioni = $this->em->getRepository(Scrutinio::class)
+      ->findOneBy(['classe' => $classe, 'periodo' => $periodo]);
+    if (!$scrutinio_valutazioni) {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
+    $dati['valutazioni'] = $scrutinio_valutazioni->getDato('valutazioni')['E'];
     // form di inserimento
     $form = $this->container->get('form.factory')->createNamedBuilder('edcivica', FormType::class)
       ->setAction($this->generateUrl('coordinatore_scrutinio_edcivica', ['classe' => $classe->getId(),
@@ -2204,6 +2303,11 @@ class ScrutinioController extends BaseController {
       // errore
       throw $this->createNotFoundException('exception.not_allowed');
     }
+    // periodo ammesso (la pagina è prevista solo per lo scrutinio finale)
+    if ($periodo != 'F') {
+      // errore
+      throw $this->createNotFoundException('exception.not_allowed');
+    }
     // recupera esito
     $esito = $this->em->getRepository(Esito::class)->createQueryBuilder('e')
       ->join('e.scrutinio', 's')
@@ -2214,7 +2318,11 @@ class ScrutinioController extends BaseController {
       ->getQuery()
       ->setMaxResults(1)
       ->getOneOrNullResult();
-    // recupera comunicazione
+    // recupera comunicazione (l'esito deve essere già stato registrato)
+    if (!$esito) {
+      // errore
+      throw $this->createNotFoundException('exception.id_notfound');
+    }
     $dati = $esito->getDati();
     // form di inserimento
     $form = $this->container->get('form.factory')->createNamedBuilder('cittadinanza', FormType::class)
