@@ -8,6 +8,10 @@
     <div id="filtro">
       <div class="gs-filters-row">
         <div class="gs-filter-col">
+          {{ form_label(form[0].tipo, null, {label_attr: {class: 'control-label'}}) }}
+          {{ form_widget(form[0].tipo) }}
+        </div>
+        <div class="gs-filter-col">
           {{ form_label(form[0].sede, null, {label_attr: {class: 'control-label'}}) }}
           {{ form_widget(form[0].sede) }}
         </div>

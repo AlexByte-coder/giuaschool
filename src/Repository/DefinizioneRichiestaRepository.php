@@ -9,6 +9,7 @@
 namespace App\Repository;
 
 use App\Entity\DefinizioneConsultazione;
+use App\Entity\Docente;
 use App\Entity\Richiesta;
 use DateTime;
 use App\Entity\Alunno;
@@ -48,8 +49,13 @@ class DefinizioneRichiestaRepository extends BaseRepository {
    */
   public function lista(Utente $utente): array {
     $ruolo = $utente->getCodiceRuolo();
-    $funzioni = array_map(fn($f) => "FIND_IN_SET('".$ruolo.$f."', dr.richiedenti) > 0",
-      $utente->getCodiceFunzioni());
+    $codiciFunzioni = $utente->getCodiceFunzioni();
+    if ($ruolo == 'D' && $utente instanceof Docente &&
+        $this->getEntityManager()->getRepository(Docente::class)->seCoordinatore($utente)) {
+      // funzione coordinatore di classe
+      $codiciFunzioni[] = 'C';
+    }
+    $funzioni = array_map(fn($f) => "FIND_IN_SET('".$ruolo.$f."', dr.richiedenti) > 0", $codiciFunzioni);
     $sql = implode(' OR ', $funzioni);
     // opzione sede
     $classe = ($utente instanceOf Alunno) ? $utente->getClasse() :
@@ -103,19 +109,44 @@ class DefinizioneRichiestaRepository extends BaseRepository {
 
   /**
    * Restituisce la lista dei moduli accessibili alla classe indicata
+   * Sono inclusi i moduli inviati dagli alunni o dai loro genitori
    *
-   * @param Classe $classe Utente che ha accesso ai moduli di richiesta
+   * @param Classe $classe Classe a cui si riferiscono i moduli
    *
    * @return array Lista associativa con i risultati
    */
   public function listaClasse(Classe $classe): array {
+    return $this->listaModuliClasse($classe, 'DN');
+  }
+
+  /**
+   * Restituisce la lista dei moduli accessibili al coordinatore della classe indicata
+   *
+   * @param Classe $classe Classe a cui si riferiscono i moduli
+   *
+   * @return array Lista associativa con i risultati
+   */
+  public function listaCoordinatori(Classe $classe): array {
+    return $this->listaModuliClasse($classe, 'DC');
+  }
+
+  /**
+   * Restituisce la lista dei moduli accessibili alla classe indicata per la funzione richiedente
+   *
+   * @param Classe $classe Classe a cui si riferiscono i moduli
+   * @param string $funzione Codice della funzione richiedente (es. DN per alunni e genitori, DC per i coordinatori)
+   *
+   * @return array Lista associativa con i risultati
+   */
+  private function listaModuliClasse(Classe $classe, string $funzione): array {
     $sedi = [$classe->getSede()];
     // legge richieste
     $richieste = $this->createQueryBuilder('dr')
       ->select('dr.id,dr.nome,dr.unica,dr.gestione,r.id as richiesta_id,r.inviata,r.gestita,r.data,r.documento,r.allegati,r.stato,r.messaggio,(r.utente) AS utente_id')
       ->leftJoin(Richiesta::class, 'r', 'WITH', "r.definizioneRichiesta=dr.id AND r.stato IN ('I', 'G') AND r.classe=:classe")
       ->where('NOT (dr INSTANCE OF '.DefinizioneConsultazione::class.') AND dr.abilitata=1 AND (dr.sede IS NULL OR dr.sede IN (:sedi))')
-      ->andWhere("FIND_IN_SET('DN', dr.richiedenti) > 0")
+      ->andWhere('FIND_IN_SET(:funzione, dr.richiedenti) > 0')
+      ->setParameter('funzione', $funzione)
       ->setParameter('classe', $classe)
       ->setParameter('sedi', $sedi)
       ->orderBy('dr.nome', 'ASC')

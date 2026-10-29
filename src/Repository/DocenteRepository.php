@@ -10,6 +10,7 @@ namespace App\Repository;
 
 use App\Entity\Cattedra;
 use App\Entity\Classe;
+use App\Entity\Docente;
 use Doctrine\ORM\Tools\Pagination\Paginator;
 
 
@@ -316,6 +317,25 @@ class DocenteRepository extends BaseRepository {
     }
     // restituisce lista opzioni
     return $dati;
+  }
+
+  /**
+   * Restituisce vero se il docente è coordinatore, falso altrimenti
+   *
+   * @param Docente $docente Docente da controllare
+   *
+   * @return bool Vero se il docente è coordinatore, falso altrimenti
+   */
+  public function seCoordinatore(Docente $docente): bool {
+    $classi = $this->createQueryBuilder('d')
+      ->select('COUNT(c.id)')
+      ->join(Classe::class, 'c', 'WITH', 'd.id=c.coordinatore')
+      ->where("d.abilitato=1 AND d.id=:docente")
+      ->setParameter('docente', $docente->getId())
+      ->getQuery()
+      ->getSingleScalarResult();
+    // restituisce se il docente è coordinatore o meno
+    return ($classi > 0);
   }
 
 }
