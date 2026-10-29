@@ -323,9 +323,13 @@ class VotiController extends BaseController {
         } else {
           // alunni presenti
           $ordine = (int) substr($data, 11);
+          // data effettiva della valutazione: il parametro della pagina vale
+          // "0000-00-00.0" quando si entra senza indicare una data, e non e'
+          // una data valida da passare al database
+          $data_voto = $form->get('data')->getData()->format(self::FORMATO_DATA_ISO).'.'.$ordine;
           // controllo verifiche su valutazionu con stessa materia/alunno/tipo/data
           $altroDocente = $this->em->getRepository(Valutazione::class)
-            ->altroDocente($this->getUser(), $cattedra->getMateria(), $classe, $tipo, $data);
+            ->altroDocente($this->getUser(), $cattedra->getMateria(), $classe, $tipo, $data_voto);
           if (substr($data, 0, 10) != $form->get('data')->getData()->format(self::FORMATO_DATA_ISO) || $altroDocente) {
             $ordine = $this->em->getRepository(Valutazione::class)
               ->numeroOrdineClasse($cattedra->getMateria(), $classe, $tipo, $form->get('data')->getData());
@@ -382,8 +386,9 @@ class VotiController extends BaseController {
           $this->em->flush();
           // log azione
           $dblogger->logAzione('VOTI', 'Voti della classe');
-          // redirezione
-          return $this->redirectToRoute('lezioni_voti_quadro');
+          // redirezione: si torna al quadro della cattedra appena usata,
+          // altrimenti la pagina chiede di scegliere di nuovo la classe
+          return $this->redirectToRoute('lezioni_voti_quadro', ['cattedra' => $cattedra->getId()]);
         }
       }
     }
@@ -1003,33 +1008,39 @@ class VotiController extends BaseController {
       $cattedra = $this->reqstack->getSession()->get('/APP/DOCENTE/cattedra_lezione');
     }
     // controllo cattedra
-    $cattedra = ($cattedra > 0) ? $this->em->getRepository(Cattedra::class)->find($cattedra) : null;
-    if (!$cattedra) {
-      // errore
-      throw $this->createNotFoundException('exception.id_notfound');
-    }
-    $classe = $cattedra->getClasse();
-    if (!$this->em->getRepository(Cattedra::class)->docenteClasse($this->getUser(), $classe, true)) {
-      // errore
-      throw $this->createNotFoundException('exception.id_notfound');
-    }
-    // periodo
-    $listaPeriodi = $reg->infoPeriodi();
-    // seleziona periodo se non indicato
-    if ($periodo == 0) {
-      // seleziona periodo in base alla data
-      $datiPeriodo = $reg->periodo(new DateTime());
-      $periodo = $datiPeriodo['periodo'];
+    if ($cattedra > 0) {
+      // cattedra indicata: controlla esistenza e permessi
+      $cattedra = $this->em->getRepository(Cattedra::class)->find($cattedra);
+      if (!$cattedra) {
+        // errore
+        throw $this->createNotFoundException('exception.id_notfound');
+      }
+      $classe = $cattedra->getClasse();
+      if (!$this->em->getRepository(Cattedra::class)->docenteClasse($this->getUser(), $classe, true)) {
+        // errore
+        throw $this->createNotFoundException('exception.id_notfound');
+      }
+      // periodo
+      $listaPeriodi = $reg->infoPeriodi();
+      // seleziona periodo se non indicato
+      if ($periodo == 0) {
+        // seleziona periodo in base alla data
+        $datiPeriodo = $reg->periodo(new DateTime());
+        $periodo = $datiPeriodo['periodo'];
+      } else {
+        $datiPeriodo = $listaPeriodi[$periodo];
+      }
+      // info da visualizzare
+      $info['periodo'] = $periodo;
+      $info['listaPeriodi'] = $listaPeriodi;
+      $info['materia'] = $cattedra->getMateria()->getNomeBreve();
+      $info['alunno'] = $cattedra->getAlunno();
+      // legge voti
+      $dati = $staff->voti($classe, $datiPeriodo);
     } else {
-      $datiPeriodo = $listaPeriodi[$periodo];
+      // cattedra non specificata: mostra il selettore della classe
+      $cattedra = null;
     }
-    // info da visualizzare
-    $info['periodo'] = $periodo;
-    $info['listaPeriodi'] = $listaPeriodi;
-    $info['materia'] = $cattedra->getMateria()->getNomeBreve();
-    $info['alunno'] = $cattedra->getAlunno();
-    // legge voti
-    $dati = $staff->voti($classe, $datiPeriodo);
     // visualizza pagina
     return $this->render('lezioni/voti_quadro_sostegno.html.twig', [
       'pagina_titolo' => 'page.lezioni_voti_sostegno',
