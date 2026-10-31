@@ -1402,7 +1402,7 @@ class RichiesteController extends BaseController {
       ->setClasse($classe);
     $this->em->persist($richiesta);
     // informazioni per la visualizzazione
-    $info['modulo'] = '@data/moduli/'.$definizioneRichiesta->getModulo();
+    $info['modulo'] = $this->templateModulo('moduli', $definizioneRichiesta->getModulo());
     $info['allegati'] = $definizioneRichiesta->getAllegati();
     $info['classe'] = $classe;
     $info['valore_classe'] = $classe.' - '.$classe->getSede()->getNomeBreve();
